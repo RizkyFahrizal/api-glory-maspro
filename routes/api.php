@@ -14,12 +14,36 @@ use App\Http\Controllers\Api\ProductController;
 |
 */
 
-Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
-    return $request->user();
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\AccountController;
+
+// Endpoint Public
+Route::post('/login', [AuthController::class, 'login']);
+Route::get('/products', [ProductController::class, 'index']);
+Route::get('/products/{slug}', [ProductController::class, 'show']);
+
+// Endpoint Protected (Butuh Login)
+Route::middleware('auth:sanctum')->group(function () {
+    
+    // Endpoint Get Current User & Logout
+    Route::get('/user', function (Request $request) {
+        return $request->user();
+    });
+    Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Endpoint Account (Bisa diakses Admin & Marketing)
+    Route::get('/accounts', [AccountController::class, 'index']);
+    Route::put('/accounts/{id}', [AccountController::class, 'update']);
+    
+    // Endpoint Account (HANYA Admin)
+    Route::middleware('role:admin')->group(function () {
+        Route::post('/accounts', [AccountController::class, 'store']);
+        Route::delete('/accounts/{id}', [AccountController::class, 'destroy']);
+        
+        // Nanti untuk CRUD Product (HANYA Admin)
+        Route::post('/products', [ProductController::class, 'store']);
+        Route::put('/products/{id}', [ProductController::class, 'update']);
+        Route::delete('/products/{id}', [ProductController::class, 'destroy']);
+    });
 });
 
-// Endpoint untuk halaman katalog (Public)
-Route::get('/products', [ProductController::class, 'index']);
-
-// Endpoint untuk halaman detail rumah (Public)
-Route::get('/products/{slug}', [ProductController::class, 'show']);
