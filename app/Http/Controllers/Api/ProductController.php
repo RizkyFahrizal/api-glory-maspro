@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
+use Intervention\Image\Facades\Image;
 
 class ProductController extends Controller
 {
@@ -115,7 +116,16 @@ class ProductController extends Controller
         // Handle Image Uploads
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $index => $image) {
-                $path = $image->store('products', 'public');
+                // Generate nama file unik dengan ekstensi .webp
+                $filename = uniqid() . '.webp';
+                $path = 'products/' . $filename;
+
+                // Konversi gambar ke webp (kualitas 80)
+                $img = Image::make($image)->encode('webp', 80);
+                
+                // Simpan ke storage public
+                Storage::disk('public')->put($path, (string) $img);
+
                 ProductImage::create([
                     'product_id' => $product->id,
                     'image_path' => $path,
@@ -179,9 +189,14 @@ class ProductController extends Controller
                 $oldImg->delete();
             }
 
-            // Upload gambar baru
+            // Upload gambar baru dan konversi ke webp
             foreach ($request->file('images') as $index => $image) {
-                $path = $image->store('products', 'public');
+                $filename = uniqid() . '.webp';
+                $path = 'products/' . $filename;
+
+                $img = Image::make($image)->encode('webp', 80);
+                Storage::disk('public')->put($path, (string) $img);
+
                 ProductImage::create([
                     'product_id' => $product->id,
                     'image_path' => $path,
