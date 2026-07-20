@@ -17,9 +17,11 @@ use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AccountController;
 
-// Endpoint Public
+// Endpoint// Public Routes (Bisa diakses siapa saja)
 Route::post('/login', [AuthController::class, 'login']);
+
 Route::get('/products', [ProductController::class, 'index']);
+Route::get('/products/locations', [ProductController::class, 'locations']);
 Route::get('/products/{slug}', [ProductController::class, 'show']);
 
 // Endpoint Protected (Butuh Login)

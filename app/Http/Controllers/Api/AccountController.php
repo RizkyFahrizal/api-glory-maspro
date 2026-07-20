@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Product;
+use App\Models\WaMarketing;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 
@@ -30,6 +31,8 @@ class AccountController extends Controller
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
             'role' => 'required|in:admin,marketing',
+            'phone_number' => 'nullable|string|max:20',
+            'coverage_area' => 'nullable|string|max:255',
         ]);
 
         $user = User::create([
@@ -38,6 +41,15 @@ class AccountController extends Controller
             'password' => Hash::make($request->password),
             'role' => $request->role,
         ]);
+
+        if ($request->role === 'marketing' && $request->has('phone_number')) {
+            WaMarketing::create([
+                'user_id' => $user->id,
+                'phone_number' => $request->phone_number,
+                'coverage_area' => $request->coverage_area ?? 'Semua Area',
+                'is_active' => true,
+            ]);
+        }
 
         return response()->json([
             'success' => true,
@@ -71,6 +83,9 @@ class AccountController extends Controller
             'email' => 'sometimes|required|string|email|max:255|unique:users,email,' . $id,
             'password' => 'nullable|string|min:6',
             'role' => 'sometimes|required|in:admin,marketing',
+            'phone_number' => 'nullable|string|max:20',
+            'coverage_area' => 'nullable|string|max:255',
+            'is_active' => 'nullable|boolean',
         ];
 
         // Marketing tidak boleh mengubah role-nya sendiri menjadi admin
@@ -106,10 +121,26 @@ class AccountController extends Controller
 
         $userToUpdate->save();
 
+        // Update WaMarketing if role is marketing
+        if ($userToUpdate->role === 'marketing') {
+            $waData = [];
+            if ($request->has('phone_number')) $waData['phone_number'] = $request->phone_number;
+            if ($request->has('coverage_area')) $waData['coverage_area'] = $request->coverage_area;
+            if ($request->has('is_active')) $waData['is_active'] = $request->is_active;
+
+            if (!empty($waData)) {
+                $waMarketing = WaMarketing::firstOrCreate(
+                    ['user_id' => $userToUpdate->id],
+                    ['coverage_area' => 'Semua Area', 'phone_number' => '']
+                );
+                $waMarketing->update($waData);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Akun berhasil diupdate.',
-            'data' => $userToUpdate
+            'data' => $userToUpdate->load('waMarketing')
         ]);
     }
 

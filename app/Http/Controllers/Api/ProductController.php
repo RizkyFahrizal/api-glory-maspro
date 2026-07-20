@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\ProductImage;
+use App\Models\WaMarketing;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Intervention\Image\Facades\Image;
 
 class ProductController extends Controller
@@ -16,14 +18,41 @@ class ProductController extends Controller
     /**
      * Menampilkan daftar semua rumah (Katalog)
      */
-    public function index()
+    public function index(Request $request)
     {
-        // Mengambil data rumah yang statusnya 'available'
-        // dan memanggil semua gambarnya agar fitur carousel di card berfungsi
-        $properties = Product::with('images')
-        ->where('status', 'available')
-        ->latest() // Urutkan dari yang paling baru
-        ->get();
+        $query = Product::with('images')->where('status', 'available');
+
+        // Filter berdasarkan Lokasi
+        if ($request->has('location') && !empty($request->location)) {
+            $query->where('location', 'like', '%' . $request->location . '%');
+        }
+
+        // Filter berdasarkan Tipe Properti
+        if ($request->has('property_type') && !empty($request->property_type)) {
+            $query->where('property_type', $request->property_type);
+        }
+
+        // Filter berdasarkan Kamar Tidur
+        if ($request->has('bedrooms') && !empty($request->bedrooms)) {
+            $query->where('bedrooms', $request->bedrooms);
+        }
+
+        // Filter berdasarkan Kamar Mandi
+        if ($request->has('bathrooms') && !empty($request->bathrooms)) {
+            $query->where('bathrooms', $request->bathrooms);
+        }
+
+        // Filter berdasarkan Range Harga (Start & End)
+        // Logika: Produk masuk kriteria jika (price_start <= max_price) AND (price_end >= min_price)
+        // atau untuk simplenya: cek apakah budget minimum lebih kecil dari harga maksimal properti, dst.
+        if ($request->has('min_price') && is_numeric($request->min_price)) {
+            $query->where('price_end', '>=', $request->min_price);
+        }
+        if ($request->has('max_price') && is_numeric($request->max_price)) {
+            $query->where('price_start', '<=', $request->max_price);
+        }
+
+        $properties = $query->latest()->get();
 
         return response()->json([
             'success' => true,
@@ -37,8 +66,8 @@ class ProductController extends Controller
      */
     public function show($slug)
     {
-        // Mengambil data satu rumah beserta SEMUA galerinya dan data marketingnya
-        $property = Product::with(['images', 'user.waMarketing'])
+        // Mengambil data satu rumah beserta galerinya
+        $property = Product::with(['images', 'user'])
             ->where('slug', $slug)
             ->first();
 
@@ -47,6 +76,30 @@ class ProductController extends Controller
                 'success' => false,
                 'message' => 'Properti tidak ditemukan'
             ], 404);
+        }
+
+        // Logika Round Robin untuk Marketing
+        $activeMarketings = WaMarketing::with('user')->where('is_active', true)->orderBy('id')->get();
+        
+        if ($activeMarketings->count() > 0) {
+            // Ambil ID terakhir yang dilayani dari Cache
+            $lastServedId = Cache::get('last_served_marketing_id', 0);
+            
+            // Cari agen berikutnya
+            $nextMarketing = $activeMarketings->firstWhere('id', '>', $lastServedId);
+            
+            // Jika tidak ada yang id-nya lebih besar, kembali ke agen pertama
+            if (!$nextMarketing) {
+                $nextMarketing = $activeMarketings->first();
+            }
+            
+            // Simpan ID agen ini sebagai yang terakhir dilayani
+            Cache::put('last_served_marketing_id', $nextMarketing->id);
+            
+            // Sisipkan data marketing terpilih ke respons (agar frontend bisa langsung pakai)
+            $property->marketing = $nextMarketing;
+        } else {
+            $property->marketing = null;
         }
 
         return response()->json([
@@ -63,7 +116,8 @@ class ProductController extends Controller
     {
         $request->validate([
             'title' => 'required|string|max:255',
-            'price' => 'required|numeric',
+            'price_start' => 'required|numeric',
+            'price_end' => 'required|numeric',
             'description' => 'required|string',
             'bedrooms' => 'required|string|max:20',
             'bathrooms' => 'required|string|max:20',
@@ -96,7 +150,8 @@ class ProductController extends Controller
             'listing_id' => $listingId,
             'title' => $request->title,
             'slug' => $slug,
-            'price' => $request->price,
+            'price_start' => $request->price_start,
+            'price_end' => $request->price_end,
             'description' => $request->description,
             'bedrooms' => $request->bedrooms,
             'bathrooms' => $request->bathrooms,
@@ -154,7 +209,8 @@ class ProductController extends Controller
 
         $request->validate([
             'title' => 'sometimes|required|string|max:255',
-            'price' => 'sometimes|required|numeric',
+            'price_start' => 'sometimes|required|numeric',
+            'price_end' => 'sometimes|required|numeric',
             'description' => 'sometimes|required|string',
             'bedrooms' => 'sometimes|required|string|max:20',
             'bathrooms' => 'sometimes|required|string|max:20',
@@ -235,5 +291,23 @@ class ProductController extends Controller
             'success' => true,
             'message' => 'Produk dan gambar berhasil dihapus'
         ]);
+    }
+
+    /**
+     * Mengambil daftar lokasi unik untuk combo box
+     */
+    public function locations()
+    {
+        $locations = Product::where('status', 'available')
+            ->select('location')
+            ->distinct()
+            ->orderBy('location', 'asc')
+            ->pluck('location');
+            
+        return response()->json([
+            'success' => true,
+            'message' => 'Berhasil mengambil daftar lokasi',
+            'data'    => $locations
+        ], 200);
     }
 }
