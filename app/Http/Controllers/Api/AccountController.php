@@ -9,17 +9,33 @@ use App\Models\Product;
 use App\Models\WaMarketing;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
+use Intervention\Image\Facades\Image;
 
 class AccountController extends Controller
 {
     // GET /api/accounts - Bisa diakses Admin dan Marketing
     public function index()
     {
-        $users = User::all();
+        $users = User::with('waMarketing')->get();
         
         return response()->json([
             'success' => true,
             'data' => $users
+        ]);
+    }
+
+    public function show($id)
+    {
+        $user = User::with('waMarketing')->find($id);
+        
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Akun tidak ditemukan.'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $user
         ]);
     }
 
@@ -33,6 +49,8 @@ class AccountController extends Controller
             'role' => 'required|in:admin,marketing',
             'phone_number' => 'nullable|string|max:20',
             'coverage_area' => 'nullable|string|max:255',
+            'position' => 'nullable|string|max:100',
+            'photo_base64' => 'nullable|string',
         ]);
 
         $user = User::create([
@@ -42,11 +60,29 @@ class AccountController extends Controller
             'role' => $request->role,
         ]);
 
-        if ($request->role === 'marketing' && $request->has('phone_number')) {
+        if ($request->has('photo_base64') && !empty($request->photo_base64)) {
+            $image_parts = explode(";base64,", $request->photo_base64);
+            if (count($image_parts) == 2) {
+                $image_base64 = base64_decode($image_parts[1]);
+                $filename = 'profile_' . uniqid() . '.webp';
+                $path = 'profiles/' . $filename;
+                $img = Image::make($image_base64)->orientate()->encode('webp', 80);
+                Storage::disk('public')->put($path, (string) $img);
+                $user->photo = $path;
+                $user->save();
+            }
+        }
+
+        if ($request->role === 'marketing') {
+            $maxQueueOrder = WaMarketing::max('queue_order');
+            $nextQueueOrder = is_null($maxQueueOrder) ? 0 : $maxQueueOrder + 1;
+
             WaMarketing::create([
                 'user_id' => $user->id,
-                'phone_number' => $request->phone_number,
+                'phone_number' => $request->phone_number ?? '',
                 'coverage_area' => $request->coverage_area ?? 'Semua Area',
+                'position' => $request->position ?? 'Marketing Staff',
+                'queue_order' => $nextQueueOrder,
                 'is_active' => true,
             ]);
         }
@@ -85,7 +121,9 @@ class AccountController extends Controller
             'role' => 'sometimes|required|in:admin,marketing',
             'phone_number' => 'nullable|string|max:20',
             'coverage_area' => 'nullable|string|max:255',
+            'position' => 'nullable|string|max:100',
             'is_active' => 'nullable|boolean',
+            'photo_base64' => 'nullable|string',
         ];
 
         // Marketing tidak boleh mengubah role-nya sendiri menjadi admin
@@ -119,6 +157,24 @@ class AccountController extends Controller
             $userToUpdate->password = Hash::make($request->password);
         }
 
+        if ($request->has('photo_base64') && !empty($request->photo_base64)) {
+            $image_parts = explode(";base64,", $request->photo_base64);
+            if (count($image_parts) == 2) {
+                $image_base64 = base64_decode($image_parts[1]);
+                $filename = 'profile_' . uniqid() . '.webp';
+                $path = 'profiles/' . $filename;
+                $img = Image::make($image_base64)->orientate()->encode('webp', 80);
+                Storage::disk('public')->put($path, (string) $img);
+                
+                // Delete old photo if exists
+                if ($userToUpdate->photo && Storage::disk('public')->exists($userToUpdate->photo)) {
+                    Storage::disk('public')->delete($userToUpdate->photo);
+                }
+                
+                $userToUpdate->photo = $path;
+            }
+        }
+
         $userToUpdate->save();
 
         // Update WaMarketing if role is marketing
@@ -126,12 +182,13 @@ class AccountController extends Controller
             $waData = [];
             if ($request->has('phone_number')) $waData['phone_number'] = $request->phone_number;
             if ($request->has('coverage_area')) $waData['coverage_area'] = $request->coverage_area;
+            if ($request->has('position')) $waData['position'] = $request->position;
             if ($request->has('is_active')) $waData['is_active'] = $request->is_active;
 
             if (!empty($waData)) {
                 $waMarketing = WaMarketing::firstOrCreate(
                     ['user_id' => $userToUpdate->id],
-                    ['coverage_area' => 'Semua Area', 'phone_number' => '']
+                    ['coverage_area' => 'Semua Area', 'phone_number' => '', 'position' => 'Marketing Staff']
                 );
                 $waMarketing->update($waData);
             }

@@ -16,13 +16,16 @@ use App\Http\Controllers\Api\ProductController;
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AccountController;
+use App\Http\Controllers\Api\WaMarketingController;
 
 // Endpoint// Public Routes (Bisa diakses siapa saja)
 Route::post('/login', [AuthController::class, 'login']);
 
 Route::get('/products', [ProductController::class, 'index']);
 Route::get('/products/locations', [ProductController::class, 'locations']);
+Route::get('/products/types', [ProductController::class, 'getTypes']);
 Route::get('/products/{slug}', [ProductController::class, 'show']);
+Route::get('/wa-marketing/next', [WaMarketingController::class, 'next']);
 
 // Endpoint Protected (Butuh Login)
 Route::middleware('auth:sanctum')->group(function () {
@@ -35,6 +38,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Endpoint Account (Bisa diakses Admin & Marketing)
     Route::get('/accounts', [AccountController::class, 'index']);
+    Route::get('/accounts/{id}', [AccountController::class, 'show']);
     Route::put('/accounts/{id}', [AccountController::class, 'update']);
     
     // Endpoint Account (HANYA Admin)
@@ -42,10 +46,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/accounts', [AccountController::class, 'store']);
         Route::delete('/accounts/{id}', [AccountController::class, 'destroy']);
         
+        Route::post('/wa-marketing/reorder', [WaMarketingController::class, 'reorder']);
+        
         // Nanti untuk CRUD Product (HANYA Admin)
         Route::post('/products', [ProductController::class, 'store']);
         Route::put('/products/{id}', [ProductController::class, 'update']);
         Route::delete('/products/{id}', [ProductController::class, 'destroy']);
+        Route::delete('/products/images/{imageId}', [ProductController::class, 'deleteImage']);
     });
 });
 

@@ -20,11 +20,21 @@ class ProductController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Product::with('images')->where('status', 'available');
+        $query = Product::with('images');
+
+        // Filter berdasarkan Pencarian Teks (Search)
+        if ($request->has('search') && !empty($request->search)) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('title', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('description', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('location', 'like', '%' . $searchTerm . '%');
+            });
+        }
 
         // Filter berdasarkan Lokasi
         if ($request->has('location') && !empty($request->location)) {
-            $query->where('location', 'like', '%' . $request->location . '%');
+            $query->where('location', $request->location);
         }
 
         // Filter berdasarkan Tipe Properti
@@ -69,6 +79,7 @@ class ProductController extends Controller
         // Mengambil data satu rumah beserta galerinya
         $property = Product::with(['images', 'user'])
             ->where('slug', $slug)
+            ->orWhere('id', $slug)
             ->first();
 
         if (!$property) {
@@ -131,9 +142,20 @@ class ProductController extends Controller
             'facing' => 'nullable|string|max:50',
             'furnish' => 'nullable|string|max:50',
             'note' => 'nullable|string',
-            'images' => 'required|array',
-            'images.*' => 'image|mimes:jpeg,png,jpg,webp|max:2048',
+            'images' => 'required|array|max:7',
+            'images.*' => 'file|mimes:jpeg,png,jpg,webp,webm|max:20480',
         ]);
+
+        // Cek maksimal 1 video
+        $videoCount = 0;
+        foreach ($request->file('images') as $file) {
+            if (str_starts_with($file->getClientMimeType(), 'video/')) {
+                $videoCount++;
+            }
+        }
+        if ($videoCount > 1) {
+            return response()->json(['success' => false, 'message' => 'Maksimal hanya diperbolehkan 1 video untuk setiap produk.'], 422);
+        }
 
         // Auto-generate Slug
         $slug = Str::slug($request->title) . '-' . uniqid();
@@ -168,23 +190,28 @@ class ProductController extends Controller
             'status' => 'available',
         ]);
 
-        // Handle Image Uploads
+        // Handle Image & Video Uploads
         if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $index => $image) {
-                // Generate nama file unik dengan ekstensi .webp
-                $filename = uniqid() . '.webp';
-                $path = 'products/' . $filename;
+            foreach ($request->file('images') as $index => $file) {
+                $isPrimary = $index === 0 ? true : false; // Gambar pertama jadi primary
+                $mime = $file->getClientMimeType();
 
-                // Konversi gambar ke webp (kualitas 80)
-                $img = Image::make($image)->encode('webp', 80);
-                
-                // Simpan ke storage public
-                Storage::disk('public')->put($path, (string) $img);
+                if (str_starts_with($mime, 'video/')) {
+                    // Simpan video langsung tanpa konversi
+                    $filename = uniqid() . '.' . $file->getClientOriginalExtension();
+                    $path = $file->storeAs('products', $filename, 'public');
+                } else {
+                    // Konversi gambar ke webp (kualitas 80)
+                    $filename = uniqid() . '.webp';
+                    $path = 'products/' . $filename;
+                    $img = Image::make($file)->encode('webp', 80);
+                    Storage::disk('public')->put($path, (string) $img);
+                }
 
                 ProductImage::create([
                     'product_id' => $product->id,
                     'image_path' => $path,
-                    'is_primary' => $index === 0 ? true : false, // Gambar pertama jadi primary
+                    'is_primary' => $isPrimary,
                 ]);
             }
         }
@@ -225,9 +252,30 @@ class ProductController extends Controller
             'furnish' => 'nullable|string|max:50',
             'note' => 'nullable|string',
             'status' => 'sometimes|in:available,sold',
-            'images' => 'nullable|array',
-            'images.*' => 'image|mimes:jpeg,png,jpg,webp|max:2048',
+            'images' => 'nullable|array|max:7',
+            'images.*' => 'file|mimes:jpeg,png,jpg,webp,webm|max:20480',
         ]);
+
+        if ($request->hasFile('images')) {
+            // Cek maksimal 1 video gabungan dari yang lama dan yang baru
+            $newVideoCount = 0;
+            foreach ($request->file('images') as $file) {
+                if (str_starts_with($file->getClientMimeType(), 'video/')) {
+                    $newVideoCount++;
+                }
+            }
+            
+            $existingVideoCount = 0;
+            foreach ($product->images as $img) {
+                if (str_ends_with($img->image_path, '.mp4') || str_ends_with($img->image_path, '.webm')) {
+                    $existingVideoCount++;
+                }
+            }
+            
+            if ($newVideoCount + $existingVideoCount > 1) {
+                return response()->json(['success' => false, 'message' => 'Maksimal hanya diperbolehkan 1 video untuk setiap produk.'], 422);
+            }
+        }
 
         if ($request->has('title')) {
             $product->title = $request->title;
@@ -237,26 +285,34 @@ class ProductController extends Controller
         $product->update($request->except(['images', 'title']));
 
         // Handle Image Replacement
+        // Handle Image Additive Upload
         if ($request->hasFile('images')) {
-            // Hapus gambar lama dari storage dan database
-            $oldImages = $product->images;
-            foreach ($oldImages as $oldImg) {
-                Storage::disk('public')->delete($oldImg->image_path);
-                $oldImg->delete();
-            }
+            $hasExistingPrimary = $product->images()->where('is_primary', true)->exists();
+            $isFirstNewImage = true;
 
-            // Upload gambar baru dan konversi ke webp
-            foreach ($request->file('images') as $index => $image) {
-                $filename = uniqid() . '.webp';
-                $path = 'products/' . $filename;
+            // Upload gambar/video baru secara aditif
+            foreach ($request->file('images') as $index => $file) {
+                $isPrimary = (!$hasExistingPrimary && $isFirstNewImage) ? true : false;
+                $isFirstNewImage = false;
+                
+                $mime = $file->getClientMimeType();
 
-                $img = Image::make($image)->encode('webp', 80);
-                Storage::disk('public')->put($path, (string) $img);
+                if (str_starts_with($mime, 'video/')) {
+                    // Simpan video langsung tanpa konversi
+                    $filename = uniqid() . '.' . $file->getClientOriginalExtension();
+                    $path = $file->storeAs('products', $filename, 'public');
+                } else {
+                    // Konversi gambar ke webp dengan orientate EXIF
+                    $filename = uniqid() . '.webp';
+                    $path = 'products/' . $filename;
+                    $img = Image::make($file)->orientate()->encode('webp', 80);
+                    Storage::disk('public')->put($path, (string) $img);
+                }
 
                 ProductImage::create([
                     'product_id' => $product->id,
                     'image_path' => $path,
-                    'is_primary' => $index === 0 ? true : false,
+                    'is_primary' => $isPrimary,
                 ]);
             }
         }
@@ -280,8 +336,9 @@ class ProductController extends Controller
         }
 
         // Hapus file fisik gambar dari storage
-        foreach ($product->images as $image) {
-            Storage::disk('public')->delete($image->image_path);
+        foreach ($product->images as $oldImg) {
+            Storage::disk('public')->delete($oldImg->getRawOriginal('image_path'));
+            $oldImg->delete();
         }
 
         // Database akan otomatis menghapus dari tabel product_images karena onDelete('cascade')
@@ -289,7 +346,65 @@ class ProductController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Produk dan gambar berhasil dihapus'
+            'message' => 'Produk berhasil dihapus'
+        ]);
+    }
+
+    /**
+     * Delete a specific product image
+     */
+    public function deleteImage($imageId)
+    {
+        $image = ProductImage::find($imageId);
+        if (!$image) {
+            return response()->json(['success' => false, 'message' => 'Media tidak ditemukan'], 404);
+        }
+
+        // Cek kepemilikan
+        $product = $image->product;
+        if (Auth::user()->role === 'marketing' && $product->user_id !== Auth::id()) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+
+        Storage::disk('public')->delete($image->getRawOriginal('image_path'));
+        
+        $wasPrimary = $image->is_primary;
+        $image->delete();
+
+        // Jika yang dihapus adalah cover, jadikan gambar (bukan video) lain sebagai cover
+        if ($wasPrimary) {
+            $nextImage = $product->images()->where('image_path', 'not like', '%.mp4')->where('image_path', 'not like', '%.webm')->first();
+            if ($nextImage) {
+                $nextImage->is_primary = true;
+                $nextImage->save();
+            } else {
+                // Fallback ke media apapun jika tidak ada gambar
+                $anyMedia = $product->images()->first();
+                if ($anyMedia) {
+                    $anyMedia->is_primary = true;
+                    $anyMedia->save();
+                }
+            }
+        }
+
+        return response()->json(['success' => true, 'message' => 'Media berhasil dihapus']);
+    }
+
+    /**
+     * Get distinct property types
+     */
+    public function getTypes()
+    {
+        $types = Product::whereNotNull('property_type')
+            ->where('property_type', '!=', '')
+            ->distinct()
+            ->pluck('property_type')
+            ->sort()
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => $types
         ]);
     }
 
