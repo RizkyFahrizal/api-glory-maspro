@@ -173,6 +173,11 @@ class AccountController extends Controller
                 
                 $userToUpdate->photo = $path;
             }
+        } elseif ($request->has('remove_photo') && filter_var($request->remove_photo, FILTER_VALIDATE_BOOLEAN)) {
+            if ($userToUpdate->photo && Storage::disk('public')->exists($userToUpdate->photo)) {
+                Storage::disk('public')->delete($userToUpdate->photo);
+            }
+            $userToUpdate->photo = null;
         }
 
         $userToUpdate->save();
