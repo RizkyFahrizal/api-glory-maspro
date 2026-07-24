@@ -143,7 +143,7 @@ class ProductController extends Controller
             'furnish' => 'nullable|string|max:50',
             'note' => 'nullable|string',
             'images' => 'required|array|max:7',
-            'images.*' => 'file|mimes:jpeg,png,jpg,webp,webm|max:20480',
+            'images.*' => 'file|mimes:jpeg,png,jpg,webp,webm,mp4|max:15360',
         ]);
 
         // Cek maksimal 1 video
@@ -160,12 +160,11 @@ class ProductController extends Controller
         // Auto-generate Slug
         $slug = Str::slug($request->title) . '-' . uniqid();
 
-        // Auto-generate Listing ID: KPR-XXX-DDMMYY
+        // Auto-generate Listing ID: KPR-{id}{ddmmyy}
         $dateStr = now()->format('dmy'); // DDMMYY
         $latestProduct = Product::latest('id')->first();
         $nextId = $latestProduct ? $latestProduct->id + 1 : 1;
-        $paddedId = str_pad($nextId, 3, '0', STR_PAD_LEFT);
-        $listingId = "KPR-{$paddedId}-{$dateStr}";
+        $listingId = "KPR-{$nextId}{$dateStr}";
 
         $product = Product::create([
             'user_id' => Auth::id(),
@@ -253,7 +252,7 @@ class ProductController extends Controller
             'note' => 'nullable|string',
             'status' => 'sometimes|in:available,sold',
             'images' => 'nullable|array|max:7',
-            'images.*' => 'file|mimes:jpeg,png,jpg,webp,webm|max:20480',
+            'images.*' => 'file|mimes:jpeg,png,jpg,webp,webm,mp4|max:15360',
         ]);
 
         if ($request->hasFile('images')) {
