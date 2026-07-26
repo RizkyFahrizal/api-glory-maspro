@@ -21,6 +21,24 @@ use App\Http\Controllers\Api\WaMarketingController;
 // Endpoint// Public Routes (Bisa diakses siapa saja)
 Route::post('/login', [AuthController::class, 'login']);
 
+Route::get('/linkstorage', function () {
+    try {
+        $target = storage_path('app/public');
+        $link = public_path('storage');
+        if (file_exists($link) || is_link($link)) {
+            if (is_link($link)) {
+                unlink($link);
+            } else {
+                \Illuminate\Support\Facades\File::deleteDirectory($link);
+            }
+        }
+        symlink($target, $link);
+        return "SUKSES! Jembatan dibangun dari $target ke $link";
+    } catch (\Throwable $e) {
+        return "ERROR: " . $e->getMessage();
+    }
+});
+
 Route::get('/products', [ProductController::class, 'index']);
 Route::get('/products/locations', [ProductController::class, 'locations']);
 Route::get('/products/types', [ProductController::class, 'getTypes']);
